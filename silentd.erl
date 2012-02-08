@@ -1,5 +1,5 @@
 -module(silentd).
--export([server/1]).
+-compile(export_all).
 
 server(Port) ->
   {ok,Socket} = gen_udp:open(Port,[binary, {active, true}]),
@@ -8,29 +8,72 @@ server(Port) ->
 
 listen(Socket) ->
   receive
-    {udp,Socket,Host,Port,Bin}=M ->
-      Data = decode(Bin),
-      io:format("responding to ~p~n",[M]),
-      gen_udp:send(Socket, Host, Port, response(Data)),
-      io:format("shutting down~p~n",[Data]),
+    {udp,Socket,Host,Port,Bin} = M->
+      io:format("req: ~p~n", [M]),
+      Response = response(Bin),
+      gen_udp:send(Socket, Host, Port, Response),
+      io:format("shutting down~n"),
       gen_udp:close(Socket)
   end.
 
-response(Data) ->
- { ID, _QR, _OPCODE, TC, RD, QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT} = Data,
-  <<ID:16, 1:1, 0:4, 0:1, 0:1, 0:1, 0:1, 0:3, 0:4,
-  0:16/unsigned, 1:16/unsigned, 0:16/unsigned, 0:16/unsigned,
+-define(QR_QUERY, 0).
+-define(qrResponse, 1).
 
-  11:8, "foo.bar.com", 0:8,
-  0:8, 1:8,
-  0:8, 1:8,
-  3600:32/unsigned,
-  4:16/unsigned,
-  1:8, 1:8, 2:8, 2:8
+-define(opcodeQuery, 0).
+-define(opcodeIQuery, 1).
+-define(opcodeStatus, 2).
 
-  >>.
+-define(authoritativeAnswer, 1).
+-define(nonAuthoritativeAnswer, 0).
 
+-define(noTruncation, 0).
+-define(truncation, 1).
 
+-define(noRecursionAvailable, 0).
+-define(recursionAvailable, 1).
+
+-define(rcodeNoError, 0).
+-define(rcodeFormatError, 1).
+-define(rcodeServerFailure, 2).
+-define(rcodeNameError, 3).
+-define(rcodeNotImplemented, 4).
+-define(rcodeNotRefused, 5).
+
+-define(testReq, <<195,103,1,0,0,1,0,0,0,0,0,0,3,102,111,111,3,98,97,114,3, 99,111,109,0,0,1,0,1>>).
+
+response(Request) ->
+  <<QHeader:12/bytes, QBody/bytes>> = Request,
+
+  <<Id:16/unsigned, ?QR_QUERY:1, ?opcodeQuery:4,
+  _AA:1, ?noTruncation:1, RecursionDesired:1, _RecursionAvailable:1, 0:3, _ResponseCode:4,
+  QuestionCount:16/unsigned,
+  AnswerCount:16/unsigned,
+  NSCount:16/unsigned,
+  ARCount:16/unsigned>> = QHeader,
+
+ AHeader = make_header(Id, ?QR_QUERY, ?opcodeQuery,
+   ?authoritativeAnswer, ?noTruncation, RecursionDesired, ?recursionAvailable,
+   ?rcodeNoError, 0, 1, 0, 0),
+
+ Name = <<"foo.bar.com">>,
+ Address = <<1:8, 1:8, 2:8, 2:8>>,
+ Type = 1,
+ Class = 1,
+ TTL = 3600,
+ ABody = make_resource_record(Name, Type, Class, TTL, Address),
+ <<AHeader/bytes, ABody/bytes>>.
+
+make_header(Id, Qr, OpCode, AuthoritativeAnswer, Truncation, RecursionDesired, AuthoritativeAnswer, RCode, QCount, ACount, NSCount, ARCount) ->
+  <<Id:16/unsigned,
+  Qr:1, OpCode:4, AuthoritativeAnswer:1, Truncation:1, RecursionDesired:1, ?recursionAvailable:1, 0:3, RCode:4,
+  QCount:16/unsigned, ACount:16/unsigned, NSCount:16/unsigned, ARCount:16/unsigned>>.
+
+make_resource_record(Name, Type, Class, TTL, Data) ->
+  NameLength = size(Name),
+  DataLength = size(Data),
+  <<NameLength:8, Name/bytes, 0:8,
+  Type:16, Class:16, TTL:32/unsigned,
+  DataLength:16/unsigned, Data/bytes>>.
 
 d_qr(0) -> 'query';
 d_qr(1) -> response.
