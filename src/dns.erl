@@ -51,20 +51,19 @@ response(Request, DBase) ->
   valid_question_header(QHeader),
 
   Questions = parse_questions(QBody, QHeader#header.qcount),
-  %{QName, QType, QClass} = parse_question_body(QBody),
 
-  Answers = [ lookup(QName, QType, QClass, DBase) || {QName, QType, QClass} <- Questions ],
+  Answers = [ answer_question(Q, DBase) || Q <- Questions ],
+  ACount = length(Answers) ,
 
-  {TTL, Address} = hd(Answers),
-  {QName, QType, QClass} = hd(Questions),
-
-  AHeader = make_answer_header(QHeader),
+  AHeader = make_answer_header(QHeader, ACount),
   AHeaderB = serialize_header(AHeader),
 
-  % make answer body
-
-  ABodyB = serialize_resource_record(QName, QType, QClass, TTL, Address),
+  ABodyB = list_to_binary(Answers),
   <<AHeaderB/bytes, ABodyB/bytes>>.
+
+answer_question({Name, Type, Class}, DBase) ->
+  {TTL, Address} = lookup(Name, Type, Class, DBase),
+  serialize_resource_record(Name, Type, Class, TTL, Address).
 
 parse_header(Header) ->
   <<ID:16/unsigned, QR:1, OPCODE:4,
@@ -144,7 +143,7 @@ qname_to_domain_name(QName) ->
   NameString = string:join(Labels, "."),
   list_to_binary(NameString).
 
-make_answer_header(QHeader) ->
+make_answer_header(QHeader, ACount) ->
   QHeader#header{
     qr=?QR_RESPONSE,
     authoritative_answer=?AUTHORITATIVE_ANSWER,
@@ -152,7 +151,7 @@ make_answer_header(QHeader) ->
     recursion_available=?RECURSION_AVAILABLE,
     rcode=?RCODE_NO_ERROR,
     qcount=0,
-    acount=1,
+    acount=ACount,
     nscount=0,
     arcount=0
   }.
