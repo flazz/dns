@@ -1,4 +1,4 @@
--module(silentd).
+-module(dns).
 -compile(export_all).
 
 -define(QR_QUERY, 0).
@@ -182,7 +182,7 @@ serialize_resource_record(Name, Type, Class, TTL, Data) ->
   DataLength:16/unsigned, Data/bytes>>.
 
 qname_to_domain_name(QName) ->
-  Labels = hof:unfold(fun silentd:take_label/1, QName),
+  Labels = hof:unfold(fun dns:take_label/1, QName),
   NameString = string:join(Labels, "."),
   list_to_binary(NameString).
 
