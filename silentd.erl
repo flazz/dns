@@ -51,8 +51,9 @@
 -define(Q_TYPE_MAILA, 254).
 -define(Q_TYPE_ANY, 255).
 
-%-record(header, {id, qr, opcode, authoritative_answer, truncation
-
+-record(header, {id,
+    qr, opcode, authoritative_answer, truncation, recursion_desired, recursion_available,
+    rcode, qcount, acount, nscount, arcount}).
 
 server(Port) ->
   DBase = spawn(data, loop, [[]]),
@@ -119,9 +120,9 @@ response(Request, DBase) ->
   ABody = make_resource_record(Name, Type, Class, TTL, Address),
   <<AHeader/bytes, ABody/bytes>>.
 
-make_header(Id, Qr, OpCode, AuthoritativeAnswer, Truncation, RecursionDesired, AuthoritativeAnswer, RCode, QCount, ACount, NSCount, ARCount) ->
+make_header(Id, Qr, OpCode, AuthoritativeAnswer, Truncation, RecursionDesired, RecursionAvailable, RCode, QCount, ACount, NSCount, ARCount) ->
   <<Id:16/unsigned,
-  Qr:1, OpCode:4, AuthoritativeAnswer:1, Truncation:1, RecursionDesired:1, ?RECURSION_AVAILABLE:1, 0:3, RCode:4,
+  Qr:1, OpCode:4, AuthoritativeAnswer:1, Truncation:1, RecursionDesired:1, RecursionAvailable:1, 0:3, RCode:4,
   QCount:16/unsigned, ACount:16/unsigned, NSCount:16/unsigned, ARCount:16/unsigned>>.
 
 make_resource_record(Name, Type, Class, TTL, Data) ->
