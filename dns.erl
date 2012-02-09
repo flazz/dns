@@ -182,12 +182,14 @@ serialize_resource_record(Name, Type, Class, TTL, Data) ->
   DataLength:16/unsigned, Data/bytes>>.
 
 qname_to_domain_name(QName) ->
-  Labels = hof:unfold(fun dns:take_label/1, QName),
+
+  TakeLabel = fun
+    (<<0:8>>) -> {};
+    (<<Size:8, RestWithLabel/bytes>>) ->
+      <<Label:Size/bytes, Rest/bytes>> = RestWithLabel,
+      { binary_to_list(Label), Rest }
+  end,
+
+  Labels = hof:unfold(TakeLabel, QName),
   NameString = string:join(Labels, "."),
   list_to_binary(NameString).
-
-% TODO put this inside qname_to_domain_name
-take_label(<<0:8>>) -> {};
-take_label(<<Size:8, RestWithLabel/bytes>>) ->
-  <<Label:Size/bytes, Rest/bytes>> = RestWithLabel,
-  { binary_to_list(Label), Rest }.
