@@ -1,11 +1,12 @@
 -module(dns).
 -compile(export_all).
 
--include("dns_values.hrl").
+-include("include/dns_values.hrl").
 
--record(header, {id,
-    qr, opcode, authoritative_answer, truncation, recursion_desired, recursion_available,
-    rcode, qcount, acount, nscount, arcount}).
+-record(header,
+  { id, qr, opcode, authoritative_answer, truncation,
+    recursion_desired, recursion_available,
+    rcode, qcount, acount, nscount, arcount }).
 
 % TODO try using otp for server patterns
 server(Port) ->
@@ -43,13 +44,14 @@ lookup(Name, TypeCode, ClassCode, DBase) ->
     {T, {A, B, C, D}} -> {T, <<A:8, B:8, C:8, D:8>>}
   end.
 
-% TODO handle multiple questions
 response(Request, DBase) ->
   <<QHeaderB:12/bytes, QBody/bytes>> = Request,
 
   % parse question header
   QHeader = parse_header(QHeaderB),
   valid_question_header(QHeader),
+
+  %QHeader#header.qcount
   {QName, QType, QClass} = parse_question_body(QBody),
 
   {TTL, Address} = lookup(QName, QType, QClass, DBase),
@@ -85,6 +87,14 @@ parse_header(Header) ->
 
 valid_question_header(#header{qr = ?QR_QUERY, opcode = ?OPCODE_QUERY, truncation = ?TRUNCATION}) -> true;
 valid_question_header(_) -> false.
+
+take_question({QBody, 0}) -> {};
+take_question({QBody, QCount}) ->
+  QName = take_qname(QBody),
+  <<QName/bytes, QType:16, QClass:16, Rest/bytes>> = QBody,
+  X = {QName, QType, QClass},
+  NextSeed = { Rest, QCount - 1},
+  { X, NextSeed }.
 
 parse_question_body(QBody) ->
   QNameSize = size(QBody) - 4,

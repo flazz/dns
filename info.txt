@@ -1,1 +1,2 @@
 http://www.netfor2.com/dns.htm
+http://freesoft.org/CIE/RFC/1035
