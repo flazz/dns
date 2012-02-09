@@ -24,6 +24,33 @@
 -define(RCODE_NOT_IMPLEMENTED, 4).
 -define(RCODE_NOT_REFUSED, 5).
 
+-define(CLASS_IN, 1).
+-define(CLASS_CS, 2).
+-define(CLASS_CH, 3).
+-define(CLASS_HS, 4).
+-define(Q_CLASS_ANY, 255).
+
+-define(TYPE_A, 1).
+-define(TYPE_NS, 2).
+-define(TYPE_MD, 3).
+-define(TYPE_MF, 4).
+-define(TYPE_CNAME, 5).
+-define(TYPE_SOA, 6).
+-define(TYPE_MB, 7).
+-define(TYPE_MG, 8).
+-define(TYPE_MR, 9).
+-define(TYPE_NULL, 10).
+-define(TYPE_WKS, 11).
+-define(TYPE_PTR, 12).
+-define(TYPE_HINFO, 13).
+-define(TYPE_MINFO, 14).
+-define(TYPE_MX, 15).
+-define(TYPE_TXT, 16).
+-define(Q_TYPE_AXFR, 252).
+-define(Q_TYPE_MAILB, 253).
+-define(Q_TYPE_MAILA, 254).
+-define(Q_TYPE_ANY, 255).
+
 server(Port) ->
   DBase = spawn(fun dbloop/0),
   {ok,Socket} = gen_udp:open(Port,[binary, {active, true}]),
@@ -35,22 +62,50 @@ listen(Socket, DBase) ->
     {udp,Socket,Host,Port,Bin} ->
       Response = response(Bin, DBase),
       gen_udp:send(Socket, Host, Port, Response),
-      io:format("shutting down~n"),
+      io:format("dns: shutting down~n"),
       gen_udp:close(Socket),
       DBase ! stop
   end.
 
 dbloop() ->
+  % name, type, class ttl data
+  Records = [
+    {<<"foo.bar.com">>, address, internet, 3600, {1,1,2,2}}
+  ],
+
   receive
-    stop -> done;
+    stop ->
+      io:format("db: shutting down~n"),
+      done;
 
-    {Pid, "foo.bar.com", address, internet} ->
-      io:format("lookup~n"),
-      Pid ! {1,1,2,2},
-      dbloop();
+    {Pid, Name, Type, Class} ->
+      io:format("question: ~p : ~p~n", [Name, Type]),
+      MatchingRecords = [ {Ttl, D} || {N, T, C, Ttl, D} <- Records,
+        N == Name, T == Type, C == Class ],
+      Data = hd(MatchingRecords),
+      Msg = case Data of
+        [] -> not_found;
+        _Any -> Data
+      end,
+      io:format("answer: ~p~n", [Data]),
+      Pid ! Msg,
+      dbloop()
+  end.
 
-    {Pid, _Address, _Type, _Class} ->
-      Pid ! not_found
+lookup(Name, TypeCode, ClassCode, DBase) ->
+
+  Class = case ClassCode of
+    ?CLASS_IN -> internet;
+    ?CLASS_CS -> csnet;
+    ?CLASS_CH -> chaos;
+    ?CLASS_HS -> hesiod;
+    ?Q_CLASS_ANY -> any
+  end,
+
+  DBase ! {self(), Name, address, Class},
+
+  receive
+    {T, {A, B, C, D}} -> {T, <<A:8, B:8, C:8, D:8>>}
   end.
 
 response(Request, DBase) ->
@@ -69,22 +124,17 @@ response(Request, DBase) ->
   <<QName:QNameSize/bytes, QType:16, QClass:16>> = QBody,
   io:format("q name: ~p~n",[QName]),
 
-  DBase ! {self(), qname_to_domain_name(QName), address, internet},
-
-  Address = receive
-    {A, B, C, D} -> <<A:8, B:8, C:8, D:8>>
-  end,
+  % TODO pass a function that has DBase inside of it
+  Name = qname_to_domain_name(QName),
+  {TTL, Address} = lookup(Name, QType, QClass, DBase),
 
   % make answer header
   AHeader = make_header(Id, ?QR_QUERY, ?OPCODE_QUERY,
     ?AUTHORITATIVE_ANSWER, ?NO_TRUNCATION, RecursionDesired, ?RECURSION_AVAILABLE,
     ?RCODE_NO_ERROR, 0, 1, 0, 0),
 
-  Name = <<"foo.bar.com">>,
-  Address = <<1:8, 1:8, 2:8, 2:8>>,
   Type = QType,
   Class = QClass,
-  TTL = 3600,
 
   % make answer body
   ABody = make_resource_record(Name, Type, Class, TTL, Address),
@@ -104,15 +154,16 @@ make_resource_record(Name, Type, Class, TTL, Data) ->
 
 qname_to_domain_name(QName) ->
   Labels = unfold(fun silentd:take_label/1, QName),
-  string:join(Labels, ".").
+  NameString = string:join(Labels, "."),
+  list_to_binary(NameString).
+
+take_label(<<0:8>>) -> {};
+take_label(<<Size:8, RestWithLabel/bytes>>) ->
+  <<Label:Size/bytes, Rest/bytes>> = RestWithLabel,
+  { binary_to_list(Label), Rest }.
 
 unfold(Fun, Seed) ->
   case Fun(Seed) of
     {} -> [];
     {X, NextSeed} -> [X | unfold(Fun, NextSeed)]
   end.
-
-take_label(<<0:8>>) -> {};
-take_label(<<Size:8, RestWithLabel/bytes>>) ->
-  <<Label:Size/bytes, Rest/bytes>> = RestWithLabel,
-  { binary_to_list(Label), Rest }.
