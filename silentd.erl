@@ -51,8 +51,12 @@
 -define(Q_TYPE_MAILA, 254).
 -define(Q_TYPE_ANY, 255).
 
+%-record(header, {id, qr, opcode, authoritative_answer, truncation
+
+
 server(Port) ->
-  DBase = spawn(silentd, dbloop, [initial_data()]),
+  DBase = spawn(data, loop, [[]]),
+  DBase ! {self(), load},
   {ok,Socket} = gen_udp:open(Port,[binary, {active, true}]),
   io:format("dns: starting up: ~p~n", [Port]),
   listen(Socket, DBase),
@@ -65,32 +69,6 @@ listen(Socket, DBase) ->
     {udp,Socket,Host,Port,Bin} ->
       Response = response(Bin, DBase),
       gen_udp:send(Socket, Host, Port, Response)
-  end.
-
-initial_data() ->
-  Data = [
-    {{<<"foo.bar.com">>, address, internet}, {3600, {1,1,2,2}}}
-  ],
-  dict:from_list(Data).
-
-dbloop(Records) ->
-  io:format("db: starting up~n"),
-
-  receive
-    {Pid, insert, Key, Value} ->
-      NewRecords = dict:store(Key, Value, Records),
-      Pid ! ok,
-      dbloop(NewRecords);
-
-    {Pid, get, Key} ->
-      Msg = case dict:find(Key, Records) of
-        {ok, Value} -> Value;
-        error -> not_found
-      end,
-      Pid ! Msg,
-      dbloop(Records);
-
-    stop -> io:format("db: shutting down~n")
   end.
 
 lookup(Name, TypeCode, ClassCode, DBase) ->
@@ -125,7 +103,6 @@ response(Request, DBase) ->
   % parse question body
   QNameSize = size(QBody) - 4,
   <<QName:QNameSize/bytes, QType:16, QClass:16>> = QBody,
-  io:format("q name: ~p~n",[QName]),
 
   Name = qname_to_domain_name(QName),
   {TTL, Address} = lookup(Name, QType, QClass, DBase),
@@ -155,7 +132,7 @@ make_resource_record(Name, Type, Class, TTL, Data) ->
   DataLength:16/unsigned, Data/bytes>>.
 
 qname_to_domain_name(QName) ->
-  Labels = unfold(fun silentd:take_label/1, QName),
+  Labels = hof:unfold(fun silentd:take_label/1, QName),
   NameString = string:join(Labels, "."),
   list_to_binary(NameString).
 
@@ -163,9 +140,3 @@ take_label(<<0:8>>) -> {};
 take_label(<<Size:8, RestWithLabel/bytes>>) ->
   <<Label:Size/bytes, Rest/bytes>> = RestWithLabel,
   { binary_to_list(Label), Rest }.
-
-unfold(Fun, Seed) ->
-  case Fun(Seed) of
-    {} -> [];
-    {X, NextSeed} -> [X | unfold(Fun, NextSeed)]
-  end.
