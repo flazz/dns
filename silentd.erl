@@ -22,7 +22,7 @@
 -define(RCODE_SERVER_FAILURE, 2).
 -define(RCODE_NAME_ERROR, 3).
 -define(RCODE_NOT_IMPLEMENTED, 4).
--define(RCODE_NOT_REFUSED, 5).
+-define(RCODE_REFUSED, 5).
 
 -define(CLASS_IN, 1).
 -define(CLASS_CS, 2).
@@ -52,44 +52,45 @@
 -define(Q_TYPE_ANY, 255).
 
 server(Port) ->
-  DBase = spawn(fun dbloop/0),
+  DBase = spawn(silentd, dbloop, [initial_data()]),
   {ok,Socket} = gen_udp:open(Port,[binary, {active, true}]),
-  io:format("~p~n", [Socket]),
-  listen(Socket, DBase).
+  io:format("dns: starting up: ~p~n", [Port]),
+  listen(Socket, DBase),
+  io:format("dns: shutting down~n"),
+  gen_udp:close(Socket),
+  DBase ! stop.
 
 listen(Socket, DBase) ->
   receive
     {udp,Socket,Host,Port,Bin} ->
       Response = response(Bin, DBase),
-      gen_udp:send(Socket, Host, Port, Response),
-      io:format("dns: shutting down~n"),
-      gen_udp:close(Socket),
-      DBase ! stop
+      gen_udp:send(Socket, Host, Port, Response)
   end.
 
-dbloop() ->
-  % name, type, class ttl data
-  Records = [
-    {<<"foo.bar.com">>, address, internet, 3600, {1,1,2,2}}
+initial_data() ->
+  Data = [
+    {{<<"foo.bar.com">>, address, internet}, {3600, {1,1,2,2}}}
   ],
+  dict:from_list(Data).
+
+dbloop(Records) ->
+  io:format("db: starting up~n"),
 
   receive
-    stop ->
-      io:format("db: shutting down~n"),
-      done;
+    {Pid, insert, Key, Value} ->
+      NewRecords = dict:store(Key, Value, Records),
+      Pid ! ok,
+      dbloop(NewRecords);
 
-    {Pid, Name, Type, Class} ->
-      io:format("question: ~p : ~p~n", [Name, Type]),
-      MatchingRecords = [ {Ttl, D} || {N, T, C, Ttl, D} <- Records,
-        N == Name, T == Type, C == Class ],
-      Data = hd(MatchingRecords),
-      Msg = case Data of
-        [] -> not_found;
-        _Any -> Data
+    {Pid, get, Key} ->
+      Msg = case dict:find(Key, Records) of
+        {ok, Value} -> Value;
+        error -> not_found
       end,
-      io:format("answer: ~p~n", [Data]),
       Pid ! Msg,
-      dbloop()
+      dbloop(Records);
+
+    stop -> io:format("db: shutting down~n")
   end.
 
 lookup(Name, TypeCode, ClassCode, DBase) ->
@@ -102,7 +103,9 @@ lookup(Name, TypeCode, ClassCode, DBase) ->
     ?Q_CLASS_ANY -> any
   end,
 
-  DBase ! {self(), Name, address, Class},
+  Key = {Name, address, Class},
+
+  DBase ! {self(), get, Key},
 
   receive
     {T, {A, B, C, D}} -> {T, <<A:8, B:8, C:8, D:8>>}
@@ -124,7 +127,6 @@ response(Request, DBase) ->
   <<QName:QNameSize/bytes, QType:16, QClass:16>> = QBody,
   io:format("q name: ~p~n",[QName]),
 
-  % TODO pass a function that has DBase inside of it
   Name = qname_to_domain_name(QName),
   {TTL, Address} = lookup(Name, QType, QClass, DBase),
 
