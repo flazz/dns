@@ -90,42 +90,91 @@ lookup(Name, TypeCode, ClassCode, DBase) ->
     {T, {A, B, C, D}} -> {T, <<A:8, B:8, C:8, D:8>>}
   end.
 
+% TODO handle multiple questions
 response(Request, DBase) ->
-  <<QHeader:12/bytes, QBody/bytes>> = Request,
+  <<QHeaderB:12/bytes, QBody/bytes>> = Request,
 
   % parse question header
-  <<Id:16/unsigned, ?QR_QUERY:1, ?OPCODE_QUERY:4,
-  _AA:1, ?NO_TRUNCATION:1, RecursionDesired:1, _RecursionAvailable:1, 0:3, _ResponseCode:4,
-  QuestionCount:16/unsigned,
-  _AnswerCount:16/unsigned,
-  _NSCount:16/unsigned,
-  _ARCount:16/unsigned>> = QHeader,
+  QHeader = parse_header(QHeaderB),
+  valid_question_header(QHeader),
+  {QName, QType, QClass} = parse_question_body(QBody),
 
-  % parse question body
-  QNameSize = size(QBody) - 4,
-  <<QName:QNameSize/bytes, QType:16, QClass:16>> = QBody,
+  {TTL, Address} = lookup(QName, QType, QClass, DBase),
 
-  Name = qname_to_domain_name(QName),
-  {TTL, Address} = lookup(Name, QType, QClass, DBase),
-
-  % make answer header
-  AHeader = make_header(Id, ?QR_QUERY, ?OPCODE_QUERY,
-    ?AUTHORITATIVE_ANSWER, ?NO_TRUNCATION, RecursionDesired, ?RECURSION_AVAILABLE,
-    ?RCODE_NO_ERROR, 0, 1, 0, 0),
-
-  Type = QType,
-  Class = QClass,
+  AHeader = make_answer_header(QHeader),
+  AHeaderB = serialize_header(AHeader),
 
   % make answer body
-  ABody = make_resource_record(Name, Type, Class, TTL, Address),
-  <<AHeader/bytes, ABody/bytes>>.
+  ABodyB = serialize_resource_record(QName, QType, QClass, TTL, Address),
+  <<AHeaderB/bytes, ABodyB/bytes>>.
+
+parse_question_body(QBody) ->
+  QNameSize = size(QBody) - 4,
+  <<QName:QNameSize/bytes, QType:16, QClass:16>> = QBody,
+  Name = qname_to_domain_name(QName),
+  {Name, QType, QClass}.
+
+valid_question_header(#header{qr = ?QR_QUERY, opcode = ?OPCODE_QUERY, truncation = ?TRUNCATION}) -> true;
+valid_question_header(_) -> false.
+
+make_answer_header(QHeader) ->
+  QHeader#header{
+    qr=?QR_RESPONSE,
+    authoritative_answer=?AUTHORITATIVE_ANSWER,
+    truncation=?NO_TRUNCATION,
+    recursion_available=?RECURSION_AVAILABLE,
+    rcode=?RCODE_NO_ERROR,
+    qcount=0,
+    acount=1,
+    nscount=0,
+    arcount=0
+  }.
+
+parse_header(Header) ->
+  <<ID:16/unsigned, QR:1, OPCODE:4,
+  AA:1, TC:1, RD:1, RA:1, 0:3, RCODE:4,
+  QDCOUNT:16/unsigned,
+  ANCOUNT:16/unsigned,
+  NSCOUNT:16/unsigned,
+  ARCOUNT:16/unsigned>> = Header,
+  #header{
+    id = ID,
+    qr = QR,
+    opcode = OPCODE,
+    authoritative_answer = AA,
+    truncation = TC,
+    recursion_desired = RD,
+    recursion_available = RA,
+    rcode = RCODE,
+    qcount = QDCOUNT,
+    acount = ANCOUNT,
+    nscount = NSCOUNT,
+    arcount = ARCOUNT
+  }.
 
 make_header(Id, Qr, OpCode, AuthoritativeAnswer, Truncation, RecursionDesired, RecursionAvailable, RCode, QCount, ACount, NSCount, ARCount) ->
   <<Id:16/unsigned,
   Qr:1, OpCode:4, AuthoritativeAnswer:1, Truncation:1, RecursionDesired:1, RecursionAvailable:1, 0:3, RCode:4,
   QCount:16/unsigned, ACount:16/unsigned, NSCount:16/unsigned, ARCount:16/unsigned>>.
 
-make_resource_record(Name, Type, Class, TTL, Data) ->
+serialize_header(H) ->
+  <<
+  (H#header.id):16/unsigned,
+  (H#header.qr):1,
+  (H#header.opcode):4,
+  (H#header.authoritative_answer):1,
+  (H#header.truncation):1,
+  (H#header.recursion_desired):1,
+  (H#header.recursion_available):1,
+  0:3,
+  (H#header.rcode):4,
+  (H#header.qcount):16/unsigned,
+  (H#header.acount):16/unsigned,
+  (H#header.nscount):16/unsigned,
+  (H#header.arcount):16/unsigned
+  >>.
+
+serialize_resource_record(Name, Type, Class, TTL, Data) ->
   NameLength = size(Name),
   DataLength = size(Data),
   <<NameLength:8, Name/bytes, 0:8,
@@ -137,6 +186,7 @@ qname_to_domain_name(QName) ->
   NameString = string:join(Labels, "."),
   list_to_binary(NameString).
 
+% TODO put this inside qname_to_domain_name
 take_label(<<0:8>>) -> {};
 take_label(<<Size:8, RestWithLabel/bytes>>) ->
   <<Label:Size/bytes, Rest/bytes>> = RestWithLabel,
