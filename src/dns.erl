@@ -8,7 +8,6 @@
     recursion_desired, recursion_available,
     rcode, qcount, acount, nscount, arcount }).
 
-% TODO try using otp for server patterns
 server(Port) ->
   DBase = spawn(data, loop, [[]]),
   DBase ! {self(), load},
@@ -51,15 +50,19 @@ response(Request, DBase) ->
   QHeader = parse_header(QHeaderB),
   valid_question_header(QHeader),
 
-  %QHeader#header.qcount
-  {QName, QType, QClass} = parse_question_body(QBody),
+  Questions = parse_questions(QBody, QHeader#header.qcount),
+  %{QName, QType, QClass} = parse_question_body(QBody),
 
-  {TTL, Address} = lookup(QName, QType, QClass, DBase),
+  Answers = [ lookup(QName, QType, QClass, DBase) || {QName, QType, QClass} <- Questions ],
+
+  {TTL, Address} = hd(Answers),
+  {QName, QType, QClass} = hd(Questions),
 
   AHeader = make_answer_header(QHeader),
   AHeaderB = serialize_header(AHeader),
 
   % make answer body
+
   ABodyB = serialize_resource_record(QName, QType, QClass, TTL, Address),
   <<AHeaderB/bytes, ABodyB/bytes>>.
 
@@ -88,13 +91,39 @@ parse_header(Header) ->
 valid_question_header(#header{qr = ?QR_QUERY, opcode = ?OPCODE_QUERY, truncation = ?TRUNCATION}) -> true;
 valid_question_header(_) -> false.
 
-take_question({QBody, 0}) -> {};
+parse_questions(QBody, QCount) ->
+  hof:unfold(fun dns:take_question/1, {QBody, QCount}).
+
+take_question({<<>>, 0}) -> {};
+take_question({<<>>, _Count}) -> error(bad_question);
+take_question({_QBody, 0}) -> error(bad_question);
 take_question({QBody, QCount}) ->
   QName = take_qname(QBody),
-  <<QName/bytes, QType:16, QClass:16, Rest/bytes>> = QBody,
-  X = {QName, QType, QClass},
-  NextSeed = { Rest, QCount - 1},
-  { X, NextSeed }.
+  QNameSize = size(QName),
+  <<QName:QNameSize/bytes, 0:8, QType:16, QClass:16, Rest/bytes>> = QBody,
+  DottedQName = varchars_to_dotted_name(QName),
+  Val = {DottedQName, QType, QClass},
+  NextSeed = {Rest, QCount - 1},
+  { Val, NextSeed }.
+
+varchars_to_dotted_name(VarChar) ->
+  TakeVarChar = fun
+    (<<>>) -> {};
+    (<<Size:8, Label:Size/bytes, Rest/bytes>>) ->
+      LabelString = binary_to_list(Label),
+      {LabelString, Rest}
+  end,
+  Labels = hof:unfold(TakeVarChar, VarChar),
+  NameString = string:join(Labels, "."),
+  list_to_binary(NameString).
+
+take_qname(QBody) ->
+  Labels = hof:unfold(fun dns:take_label/1, QBody),
+  list_to_binary(Labels).
+
+take_label(<<0:8, _/bytes>>) -> {};
+take_label(<<Size:8, Label:Size/bytes, Rest/bytes>>) ->
+  { <<Size:8, Label:Size/bytes>>, Rest }.
 
 parse_question_body(QBody) ->
   QNameSize = size(QBody) - 4,
