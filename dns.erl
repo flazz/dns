@@ -7,6 +7,7 @@
     qr, opcode, authoritative_answer, truncation, recursion_desired, recursion_available,
     rcode, qcount, acount, nscount, arcount}).
 
+% TODO try using otp for server patterns
 server(Port) ->
   DBase = spawn(data, loop, [[]]),
   DBase ! {self(), load},
@@ -60,28 +61,6 @@ response(Request, DBase) ->
   ABodyB = serialize_resource_record(QName, QType, QClass, TTL, Address),
   <<AHeaderB/bytes, ABodyB/bytes>>.
 
-parse_question_body(QBody) ->
-  QNameSize = size(QBody) - 4,
-  <<QName:QNameSize/bytes, QType:16, QClass:16>> = QBody,
-  Name = qname_to_domain_name(QName),
-  {Name, QType, QClass}.
-
-valid_question_header(#header{qr = ?QR_QUERY, opcode = ?OPCODE_QUERY, truncation = ?TRUNCATION}) -> true;
-valid_question_header(_) -> false.
-
-make_answer_header(QHeader) ->
-  QHeader#header{
-    qr=?QR_RESPONSE,
-    authoritative_answer=?AUTHORITATIVE_ANSWER,
-    truncation=?NO_TRUNCATION,
-    recursion_available=?RECURSION_AVAILABLE,
-    rcode=?RCODE_NO_ERROR,
-    qcount=0,
-    acount=1,
-    nscount=0,
-    arcount=0
-  }.
-
 parse_header(Header) ->
   <<ID:16/unsigned, QR:1, OPCODE:4,
   AA:1, TC:1, RD:1, RA:1, 0:3, RCODE:4,
@@ -102,6 +81,41 @@ parse_header(Header) ->
     acount = ANCOUNT,
     nscount = NSCOUNT,
     arcount = ARCOUNT
+  }.
+
+valid_question_header(#header{qr = ?QR_QUERY, opcode = ?OPCODE_QUERY, truncation = ?TRUNCATION}) -> true;
+valid_question_header(_) -> false.
+
+parse_question_body(QBody) ->
+  QNameSize = size(QBody) - 4,
+  <<QName:QNameSize/bytes, QType:16, QClass:16>> = QBody,
+  Name = qname_to_domain_name(QName),
+  {Name, QType, QClass}.
+
+qname_to_domain_name(QName) ->
+
+  TakeLabel = fun
+    (<<0:8>>) -> {};
+    (<<Size:8, RestWithLabel/bytes>>) ->
+      <<Label:Size/bytes, Rest/bytes>> = RestWithLabel,
+      { binary_to_list(Label), Rest }
+  end,
+
+  Labels = hof:unfold(TakeLabel, QName),
+  NameString = string:join(Labels, "."),
+  list_to_binary(NameString).
+
+make_answer_header(QHeader) ->
+  QHeader#header{
+    qr=?QR_RESPONSE,
+    authoritative_answer=?AUTHORITATIVE_ANSWER,
+    truncation=?NO_TRUNCATION,
+    recursion_available=?RECURSION_AVAILABLE,
+    rcode=?RCODE_NO_ERROR,
+    qcount=0,
+    acount=1,
+    nscount=0,
+    arcount=0
   }.
 
 make_header(Id, Qr, OpCode, AuthoritativeAnswer, Truncation, RecursionDesired, RecursionAvailable, RCode, QCount, ACount, NSCount, ARCount) ->
@@ -132,16 +146,3 @@ serialize_resource_record(Name, Type, Class, TTL, Data) ->
   <<NameLength:8, Name/bytes, 0:8,
   Type:16, Class:16, TTL:32/unsigned,
   DataLength:16/unsigned, Data/bytes>>.
-
-qname_to_domain_name(QName) ->
-
-  TakeLabel = fun
-    (<<0:8>>) -> {};
-    (<<Size:8, RestWithLabel/bytes>>) ->
-      <<Label:Size/bytes, Rest/bytes>> = RestWithLabel,
-      { binary_to_list(Label), Rest }
-  end,
-
-  Labels = hof:unfold(TakeLabel, QName),
-  NameString = string:join(Labels, "."),
-  list_to_binary(NameString).
