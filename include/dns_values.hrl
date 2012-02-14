@@ -1,3 +1,8 @@
+-record(header,
+  { id, qr, opcode, authoritative_answer, truncation,
+    recursion_desired, recursion_available,
+    rcode, qcount, acount, nscount, arcount }).
+
 -define(QR_QUERY, 0).
 -define(QR_RESPONSE, 1).
 
