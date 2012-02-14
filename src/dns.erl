@@ -30,8 +30,16 @@ response(Request, DBase) ->
   QHeader = parse:question_header(QHeaderB),
   Questions = parse:questions(QBody, QHeader#header.qcount),
 
+  Answers = answer_questions(Questions, DBase),
+
+  AHeaderB = make_answer_header(QHeader, QHeader#header.qcount, length(Answers)),
+  QuestionsB = [ serialize:question(Q) || Q <- Questions ],
+  AnswersB = Answers,
+
+  list_to_binary([AHeaderB] ++ QuestionsB ++ AnswersB).
+
+answer_questions(Questions, DBase) ->
   Loopkups = [ {Q, lookup(Name, Type, Class, DBase)} || {Name, Type, Class} = Q <- Questions ],
-  %Answers = filter lookups
 
   Pred = fun
     ({_, not_found}) -> false;
@@ -39,16 +47,9 @@ response(Request, DBase) ->
   end,
 
   XAnswers = lists:filter(Pred, Loopkups),
-  %io:format("dbug: ~p~n", [XAnswers]),
-  Answers = lists:map(fun assemble_answers/1, XAnswers),
-
-  QCount = length(Questions),
-  ACount = length(Answers),
-  AHeaderB = make_answer_header(QHeader, QCount, ACount),
-
-  QuestionsB = list_to_binary([ serialize:question(Q) || Q <- Questions ]),
-  AnswersB = list_to_binary(Answers),
-  <<AHeaderB/bytes, QuestionsB/bytes, AnswersB/bytes>>.
+  Answers = [ serialize:resource_record(Name, Type, Class, Ttl, serialize:address(Address)) ||
+    {{Name, Type, Class}, {Ttl , Address}} <- XAnswers],
+  Answers.
 
 assemble_answers({{Name, Type, Class}, {Ttl, Address}}) ->
   Data = serialize:address(Address),
