@@ -46,24 +46,41 @@ lookup(Name, TypeCode, ClassCode, DBase) ->
 response(Request, DBase) ->
   <<QHeaderB:12/bytes, QBody/bytes>> = Request,
 
-  % parse question header
-  QHeader = parse_header(QHeaderB),
-  valid_question_header(QHeader),
-
+  QHeader = parse_question_header(QHeaderB),
   Questions = parse_questions(QBody, QHeader#header.qcount),
 
+  % TODO filter questions that are not answered, replace them with auth?
   Answers = [ answer_question(Q, DBase) || Q <- Questions ],
-  ACount = length(Answers) ,
 
-  AHeader = make_answer_header(QHeader, ACount),
-  AHeaderB = serialize_header(AHeader),
+  QCount = length(Questions),
+  ACount = length(Answers),
+  AHeaderB = make_answer_header(QHeader, QCount, ACount),
 
-  ABodyB = list_to_binary(Answers),
-  <<AHeaderB/bytes, ABodyB/bytes>>.
+  QuestionsB = list_to_binary([ serialize_question(Q) || Q <- Questions ]),
+  AnswersB = list_to_binary(Answers),
+  <<AHeaderB/bytes, QuestionsB/bytes, AnswersB/bytes>>.
 
 answer_question({Name, Type, Class}, DBase) ->
   {TTL, Address} = lookup(Name, Type, Class, DBase),
   serialize_resource_record(Name, Type, Class, TTL, Address).
+
+label_to_varchar(Label) ->
+  Size = size(Label),
+  list_to_binary([Size, Label]).
+
+serialize_domain_name(Name) ->
+  Labels = binary:split(Name, <<".">>, [global]),
+  VarChars = lists:map(fun label_to_varchar/1, Labels),
+  list_to_binary(VarChars ++ [<<0:8>>]).
+
+serialize_question({Name, Type, Class}) ->
+  Labels = serialize_domain_name(Name),
+  list_to_binary([Labels] ++ [<<Type:16, Class:16>>]).
+
+parse_question_header(HeaderBin) ->
+  Header = parse_header(HeaderBin),
+  valid_question_header(Header),
+  Header.
 
 parse_header(Header) ->
   <<ID:16/unsigned, QR:1, OPCODE:4,
@@ -143,18 +160,19 @@ qname_to_domain_name(QName) ->
   NameString = string:join(Labels, "."),
   list_to_binary(NameString).
 
-make_answer_header(QHeader, ACount) ->
-  QHeader#header{
+make_answer_header(QHeader, QCount, ACount) ->
+  AnswerHeader = QHeader#header{
     qr=?QR_RESPONSE,
     authoritative_answer=?AUTHORITATIVE_ANSWER,
     truncation=?NO_TRUNCATION,
     recursion_available=?RECURSION_AVAILABLE,
     rcode=?RCODE_NO_ERROR,
-    qcount=0,
+    qcount=QCount,
     acount=ACount,
     nscount=0,
     arcount=0
-  }.
+  },
+  serialize_header(AnswerHeader).
 
 make_header(Id, Qr, OpCode, AuthoritativeAnswer, Truncation, RecursionDesired, RecursionAvailable, RCode, QCount, ACount, NSCount, ARCount) ->
   <<Id:16/unsigned,
@@ -179,8 +197,7 @@ serialize_header(H) ->
   >>.
 
 serialize_resource_record(Name, Type, Class, TTL, Data) ->
-  NameLength = size(Name),
+  Labels = serialize_domain_name(Name),
   DataLength = size(Data),
-  <<NameLength:8, Name/bytes, 0:8,
-  Type:16, Class:16, TTL:32/unsigned,
-  DataLength:16/unsigned, Data/bytes>>.
+  Tail = <<Type:16, Class:16, TTL:32/unsigned, DataLength:16/unsigned, Data/bytes>>,
+  list_to_binary([Labels, Tail]).
