@@ -16,10 +16,10 @@ loop(Records) ->
       Pid ! ok,
       loop(NewRecords);
 
-    {Pid, insert, Key, Value} ->
-      NewRecords = dict:store(Key, Value, Records),
-      Pid ! ok,
-      loop(NewRecords);
+    %{Pid, insert, Key, Value} ->
+      %NewRecords = dict:store(Key, Value, Records),
+      %Pid ! ok,
+      %loop(NewRecords);
 
     {Pid, get, Key} ->
       Msg = case dict:find(Key, Records) of

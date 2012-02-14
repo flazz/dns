@@ -6,6 +6,10 @@
 server(Port) ->
   DBase = spawn(data, loop, [[]]),
   DBase ! {self(), load},
+  receive
+    ok -> ok;
+    Other -> error(Other)
+  end,
   {ok,Socket} = gen_udp:open(Port,[binary, {active, true}]),
   io:format("dns: starting up: ~p~n", [Port]),
   listen(Socket, DBase),
@@ -26,8 +30,17 @@ response(Request, DBase) ->
   QHeader = parse:question_header(QHeaderB),
   Questions = parse:questions(QBody, QHeader#header.qcount),
 
-  % TODO filter questions that are not answered, replace them with auth?
-  Answers = [ answer_question(Q, DBase) || Q <- Questions ],
+  Loopkups = [ {Q, lookup(Name, Type, Class, DBase)} || {Name, Type, Class} = Q <- Questions ],
+  %Answers = filter lookups
+
+  Pred = fun
+    ({_, not_found}) -> false;
+    (_) -> true
+  end,
+
+  XAnswers = lists:filter(Pred, Loopkups),
+  %io:format("dbug: ~p~n", [XAnswers]),
+  Answers = lists:map(fun assemble_answers/1, XAnswers),
 
   QCount = length(Questions),
   ACount = length(Answers),
@@ -37,27 +50,21 @@ response(Request, DBase) ->
   AnswersB = list_to_binary(Answers),
   <<AHeaderB/bytes, QuestionsB/bytes, AnswersB/bytes>>.
 
-answer_question({Name, Type, Class}, DBase) ->
-  {TTL, Address} = lookup(Name, Type, Class, DBase),
-  serialize:resource_record(Name, Type, Class, TTL, Address).
+assemble_answers({{Name, Type, Class}, {Ttl, Address}}) ->
+  Data = serialize:address(Address),
+  serialize:resource_record(Name, Type, Class, Ttl, Data).
+
+class_from_code(?CLASS_IN) -> internet;
+class_from_code(?CLASS_CS) -> csnet;
+class_from_code(?CLASS_CH) -> chaos;
+class_from_code(?CLASS_HS) -> hesiod;
+class_from_code(?Q_CLASS_ANY) -> any.
 
 lookup(Name, TypeCode, ClassCode, DBase) ->
-
-  Class = case ClassCode of
-    ?CLASS_IN -> internet;
-    ?CLASS_CS -> csnet;
-    ?CLASS_CH -> chaos;
-    ?CLASS_HS -> hesiod;
-    ?Q_CLASS_ANY -> any
-  end,
-
+  Class = class_from_code(ClassCode),
   Key = {Name, address, Class},
-
   DBase ! {self(), get, Key},
-
-  receive
-    {T, {A, B, C, D}} -> {T, <<A:8, B:8, C:8, D:8>>}
-  end.
+  receive Any -> Any end.
 
 make_answer_header(QHeader, QCount, ACount) ->
   AnswerHeader = QHeader#header{
