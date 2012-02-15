@@ -3,6 +3,12 @@
 
 -include("include/dns_values.hrl").
 
+request(Request) ->
+  <<HeaderB:12/bytes, BodyB/bytes>> = Request,
+  Header = question_header(HeaderB),
+  Questions = questions(BodyB, Header#header.qcount),
+  {Header, Questions}.
+
 question_header(HeaderBin) ->
   Header = header(HeaderBin),
   valid_question_header(Header),

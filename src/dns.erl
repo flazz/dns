@@ -25,13 +25,9 @@ listen(Socket, DBase) ->
   end.
 
 response(Request, DBase) ->
-  <<RequestHeaderB:12/bytes, RequestBody/bytes>> = Request,
+  {RequestHeader, Questions} = parse:request(Request),
 
-  RequestHeader = parse:question_header(RequestHeaderB),
-
-  Questions = parse:questions(RequestBody, RequestHeader#header.qcount),
   Lookups = [ lookup(Q, DBase) || Q <- Questions ],
-  io:format("~p~n", [Lookups]),
   Answers = [ L || L <- Lookups, L /= not_found ],
 
   ResponseHeader = RequestHeader#header{
@@ -63,8 +59,3 @@ class_from_code(?CLASS_CS) -> csnet;
 class_from_code(?CLASS_CH) -> chaos;
 class_from_code(?CLASS_HS) -> hesiod;
 class_from_code(?Q_CLASS_ANY) -> any.
-
-make_header(Id, Qr, OpCode, AuthoritativeAnswer, Truncation, RecursionDesired, RecursionAvailable, RCode, QCount, ACount, NSCount, ARCount) ->
-    <<Id:16/unsigned,
-      Qr:1, OpCode:4, AuthoritativeAnswer:1, Truncation:1, RecursionDesired:1, RecursionAvailable:1, 0:3, RCode:4,
-      QCount:16/unsigned, ACount:16/unsigned, NSCount:16/unsigned, ARCount:16/unsigned>>.
