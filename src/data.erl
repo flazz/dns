@@ -23,9 +23,9 @@ loop(Records) ->
 
     {Pid, get, Key} ->
       Msg = case dict:find(Key, Records) of
-        {ok, Value} -> Value;
-        error -> not_found
-      end,
+              {ok, Value} -> Value;
+              error -> not_found
+            end,
       Pid ! Msg,
       loop(Records);
 

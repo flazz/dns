@@ -33,11 +33,20 @@ header(H) ->
   (H#header.arcount):16/unsigned
   >>.
 
-address({A, B, C, D}) ->
-  <<A:8, B:8, C:8, D:8>>.
-
 resource_record(Name, Type, Class, TTL, Data) ->
   Labels = domain_name(Name),
   DataLength = size(Data),
   Tail = <<Type:16, Class:16, TTL:32/unsigned, DataLength:16/unsigned, Data/bytes>>,
   list_to_binary([Labels, Tail]).
+
+address_record(Name, Type, Class, TTL, Address) ->
+  {A, B, C, D} = Address,
+  Data = <<A:8, B:8, C:8, D:8>>,
+  resource_record(Name, Type, Class, TTL, Data).
+
+response(Header, Questions, Answers) ->
+  Hb = header(Header),
+  Qb = [ question(Q) || Q <- Questions ],
+  Ab = [ address_record(Name, Type, Class, TTL, Address) || {Name, Type, Class, TTL, Address} <- Answers ],
+  List = [Hb] ++ Qb ++ Ab,
+  list_to_binary(List).
